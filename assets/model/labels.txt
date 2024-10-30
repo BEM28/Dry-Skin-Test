@@ -1,2 +1,3 @@
-0 Kering
-1 Lembab
+0 dry
+1 normal
+2 oily

@@ -1,5 +1,4 @@
 import 'dart:typed_data';
-import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:get/get.dart';
 import 'package:image_picker/image_picker.dart';
@@ -10,12 +9,15 @@ class CameraController extends GetxController {
   var imageBytes = Uint8List(0).obs;
   var classificationResult = ''.obs;
   var isLoading = false.obs;
+  var isRefresh = false.obs;
   late Interpreter _interpreter;
 
   @override
   void onInit() {
     super.onInit();
     imageBytes.value = Uint8List(0);
+    isRefresh.value = false;
+
     _loadModel();
   }
 
@@ -30,55 +32,75 @@ class CameraController extends GetxController {
   }
 
   void takePicture() async {
-    isLoading.value = true;
+    isRefresh.value = false;
+    classificationResult.value = '';
+    imageBytes.value = Uint8List(0);
     final XFile? picture = await _picker.pickImage(source: ImageSource.camera);
     if (picture != null) {
       imageBytes.value = await picture.readAsBytes();
-      classifyImage(imageBytes.value);
+      // classifyImage(imageBytes.value);
+      isRefresh.value = true;
     }
-    isLoading.value = false;
   }
 
-  void classifyImage(Uint8List imageData) async {
-    // Ensure imageData is not empty
-    if (imageData.isEmpty) {
-      classificationResult.value = "Gambar tidak ada atau tidak valid.";
-      return;
-    }
-
-    var decodedImage = img.decodeImage(imageData);
-    if (decodedImage == null) {
-      classificationResult.value = "Gagal memproses gambar: Dekoding gagal.";
-      return;
-    }
-
-    var input = _preprocessImage(decodedImage);
-
-    // Check interpreter before running
-    if (_interpreter == null) {
-      classificationResult.value = "Interpreter belum dimuat dengan benar.";
-      return;
-    }
-
-    var output = List.filled(2, 0).reshape([1, 2]);
-
-    // Run inference
+  void classifyImage() async {
     try {
-      _interpreter.run(input, output); // Ensure input is correctly shaped
+      isLoading.value = true;
+
+      if (imageBytes.value.isEmpty) {
+        classificationResult.value = "Gambar tidak ada atau tidak valid.";
+        return;
+      }
+
+      var decodedImage = img.decodeImage(imageBytes.value);
+      if (decodedImage == null) {
+        classificationResult.value = "Gagal memproses gambar: Dekoding gagal.";
+        isLoading.value = false;
+        return;
+      }
+
+      var input = _preprocessImage(decodedImage);
+      if (input == null) {
+        classificationResult.value =
+            "Gagal memproses gambar: Input tidak valid.";
+        isLoading.value = false;
+        return;
+      }
+
+      if (_interpreter == null) {
+        classificationResult.value = "Interpreter belum dimuat dengan benar.";
+        isLoading.value = false;
+        return;
+      }
+
+      // Update the output buffer to match the model's output shape of [1, 3]
+      var output = List.filled(3, 0.0).reshape([1, 3]);
+
+      try {
+        _interpreter.run(input, output);
+      } catch (e) {
+        print("Error running model: $e");
+        classificationResult.value = "Gagal menjalankan model: $e";
+        return;
+      }
+
+      // Update the classification logic based on the new output shape
+      if (output[0][0] > output[0][1] && output[0][0] > output[0][2]) {
+        classificationResult.value = "Kulit Kering"; // Class 0
+      } else if (output[0][1] > output[0][0] && output[0][1] > output[0][2]) {
+        classificationResult.value = "Kulit Lembab"; // Class 1
+      } else {
+        classificationResult.value =
+            "Kulit Normal"; // Class 2 (new class added)
+      }
+
+      print('[INFO] $classificationResult');
     } catch (e) {
-      print("Error running model: $e");
-      classificationResult.value = "Gagal menjalankan model: $e";
-      return;
+      print("Error processing image: $e");
+      classificationResult.value = "Terjadi kesalahan saat memproses gambar.";
+    } finally {
+      isLoading.value = false;
     }
-
-    // Check the output for classification
-    if (output[0][0] > output[0][1]) {
-      classificationResult.value = "Kulit Kering";
-    } else {
-      classificationResult.value = "Kulit Lembab";
-    }
-
-    print('[INFO] $classificationResult');
   }
 
   List<List<List<List<double>>>> _preprocessImage(img.Image image) {
